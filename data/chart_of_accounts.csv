@@ -1,0 +1,19 @@
+account_code,account_name,type
+1000,Cash,A
+1100,Trade receivables,A
+1150,Intercompany receivable,A
+1200,Inventory,A
+1500,"Property, plant and equipment",A
+1600,Investment in subsidiaries,A
+2000,Trade payables,L
+2150,Intercompany payable,L
+2500,Borrowings,L
+3000,Share capital,E
+3100,Retained earnings (opening),E
+4000,Revenue,I
+4050,Intercompany revenue,I
+5000,Cost of sales,X
+5050,Intercompany purchases,X
+6000,Operating expenses,X
+7000,Interest expense,X
+8000,Income tax expense,X

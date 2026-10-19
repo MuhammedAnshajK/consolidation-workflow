@@ -1,0 +1,55 @@
+entity,account_code,account_name,debit,credit
+PARENT,1000,Cash,1200,0
+PARENT,1100,Trade receivables,2100,0
+PARENT,1150,Intercompany receivable,540,0
+PARENT,1200,Inventory,1500,0
+PARENT,1500,"Property, plant and equipment",6000,0
+PARENT,1600,Investment in subsidiaries,3580,0
+PARENT,2000,Trade payables,0,1700
+PARENT,2150,Intercompany payable,0,150
+PARENT,2500,Borrowings,0,4000
+PARENT,3000,Share capital,0,5000
+PARENT,3100,Retained earnings (opening),0,2300
+PARENT,4000,Revenue,0,14000
+PARENT,4050,Intercompany revenue,0,0
+PARENT,5000,Cost of sales,7600,0
+PARENT,5050,Intercompany purchases,800,0
+PARENT,6000,Operating expenses,3100,0
+PARENT,7000,Interest expense,280,0
+PARENT,8000,Income tax expense,450,0
+SUB1,1000,Cash,600,0
+SUB1,1100,Trade receivables,900,0
+SUB1,1150,Intercompany receivable,150,0
+SUB1,1200,Inventory,700,0
+SUB1,1500,"Property, plant and equipment",2500,0
+SUB1,1600,Investment in subsidiaries,0,0
+SUB1,2000,Trade payables,0,650
+SUB1,2150,Intercompany payable,0,0
+SUB1,2500,Borrowings,0,1000
+SUB1,3000,Share capital,0,1000
+SUB1,3100,Retained earnings (opening),0,1460
+SUB1,4000,Revenue,0,4200
+SUB1,4050,Intercompany revenue,0,800
+SUB1,5000,Cost of sales,3000,0
+SUB1,5050,Intercompany purchases,0,0
+SUB1,6000,Operating expenses,950,0
+SUB1,7000,Interest expense,60,0
+SUB1,8000,Income tax expense,250,0
+SUB2,1000,Cash,400,0
+SUB2,1100,Trade receivables,700,0
+SUB2,1150,Intercompany receivable,0,0
+SUB2,1200,Inventory,500,0
+SUB2,1500,"Property, plant and equipment",1800,0
+SUB2,1600,Investment in subsidiaries,0,0
+SUB2,2000,Trade payables,0,450
+SUB2,2150,Intercompany payable,0,500
+SUB2,2500,Borrowings,0,600
+SUB2,3000,Share capital,0,1000
+SUB2,3100,Retained earnings (opening),0,420
+SUB2,4000,Revenue,0,3600
+SUB2,4050,Intercompany revenue,0,0
+SUB2,5000,Cost of sales,2200,0
+SUB2,5050,Intercompany purchases,0,0
+SUB2,6000,Operating expenses,800,0
+SUB2,7000,Interest expense,30,0
+SUB2,8000,Income tax expense,140,0

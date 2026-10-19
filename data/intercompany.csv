@@ -1,0 +1,5 @@
+type,from_entity,to_entity,amount_group_currency,description
+balance,SUB1,PARENT,150,Parent owes Sub One for goods bought
+balance,PARENT,SUB2,540,Loan from Parent to Sub Two (EUR 500)
+sale,SUB1,PARENT,800,Goods sold by Sub One to Parent
+unrealised_profit,SUB1,PARENT,50,Parent still holds 200 of goods from Sub One; Sub One margin 25%
