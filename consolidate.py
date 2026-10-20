@@ -70,9 +70,6 @@ def load_inputs(data_dir):
     for e in entities.iloc[1:].itertuples(index=False):
         if e.held_by not in effective:
             raise ValidationError(f"{e.entity} is held by {e.held_by}, which must be listed above it in entities.csv")
-        if ccy_of[e.held_by] != GROUP_CCY:
-            raise ValidationError(f"{e.entity} is held by {e.held_by}, a {ccy_of[e.held_by]} entity; holding "
-                                  f"companies must report in {GROUP_CCY} in this version")
         effective[e.entity] = effective[e.held_by] * e.ownership
     entities["effective"] = entities.entity.map(effective)
     over = list(assoc.loc[assoc.ownership > 0.5, "entity"])
@@ -134,26 +131,33 @@ def equity_method(assoc, fx, ic):
     return em
 
 
-def eliminations(usd, entities, ic, em=None, fx=None):
+def eliminations(usd, entities, ic, em, fx):
     """Returns a list of (entry, description, account, amount) with debits positive.
 
     Goodwill and NCI use the group's effective interest, so a subsidiary held through another subsidiary gets
     the holder's NCI share of the cost of investment deducted (indirect holding). Goodwill of a foreign
-    subsidiary is held in its own currency and retranslated at the closing rate (IAS 21.47)."""
+    subsidiary is held in its own currency and retranslated at the closing rate (IAS 21.47).
+
+    The investment cost is in the holding company's currency. A foreign holding company's investment sits in its
+    translated trial balance at the closing rate, so that amount is removed; goodwill uses the cost at the
+    historical rate, and the difference (the translation of the investment) comes out of the translation reserve
+    for the group's share and out of NCI for the holder's NCI share."""
     j = []
     eff = entities.set_index("entity").effective
+    ccy = entities.set_index("entity").currency
     for _, e in entities.iloc[1:].iterrows():
-        r = fx.loc[e.currency] if fx is not None else None
-        hist, clo = (r.historical, r.closing) if r is not None else (1, 1)
-        own, eh, inv, pre = e.effective, eff[e.held_by], e.investment_cost, e.pre_acquisition_re * hist
+        r, rh = fx.loc[e.currency], fx.loc[ccy[e.held_by]]
+        hist, clo = r.historical, r.closing
+        own, eh, pre = e.effective, eff[e.held_by], e.pre_acquisition_re * hist
+        inv_hist, inv = e.investment_cost * rh.historical, e.investment_cost * rh.closing
         sc = -usd.at[SC, e.entity]
-        gw_hist = eh * inv - own * (sc + pre)
+        gw_hist = eh * inv_hist - own * (sc + pre)
         gw = gw_hist * clo / hist
         n = f"Investment in {e['name']}"
         j += [(n, SC, sc), (n, RE, pre), (n, GW, gw), (n, INV, -inv),
               (n, NCI, -((1 - own) * (sc + pre) - (1 - eh) * inv))]
-        if e.currency != GROUP_CCY:
-            j += [(n, CTA, gw_hist - gw)]
+        if e.currency != GROUP_CCY or ccy[e.held_by] != GROUP_CCY:
+            j += [(n, CTA, gw_hist - gw + eh * (inv - inv_hist))]
         if own < 1:
             n = f"NCI share of {e['name']} post-acquisition reserves"
             post_re = -usd.at[RE, e.entity] - pre
@@ -266,7 +270,7 @@ def write_workbook(wide, coa, entities, fx, ic, journal, out_path, assoc=None):
 
     # Inputs: entities, FX, intercompany
     inp = _sheet(wb, "Inputs", "Group structure, exchange rates and intercompany data")
-    _header(inp, 5, ["Entity", "Name", "Currency", "Ownership", "Investment cost (USD)",
+    _header(inp, 5, ["Entity", "Name", "Currency", "Ownership", "Investment cost (holder's currency)",
                      "Pre-acq. retained earnings (local)", "Opening RE (USD)", "Held by", "Group effective interest"],
             widths=[10, 28, 10, 11, 12, 14, 12, 10, 12])
     ent_row = {}
@@ -461,16 +465,17 @@ def write_workbook(wide, coa, entities, fx, ic, journal, out_path, assoc=None):
         return f"Translation!{tr_cols[ent]}{tr_row[code]}"
     formulas = []
     for e in sub_iter:
-        er = ent_row[e.entity]; fr = fx_row[e.currency]
-        own, eh, inv = f"Inputs!$J${er}", f"Inputs!$J${ent_row[e.held_by]}", f"Inputs!$F${er}"
+        er = ent_row[e.entity]; fr = fx_row[e.currency]; hr = fx_row[ent_by.currency[e.held_by]]
+        own, eh = f"Inputs!$J${er}", f"Inputs!$J${ent_row[e.held_by]}"
+        inv, inv_hist = f"(Inputs!$F${er}*Inputs!$D${hr})", f"(Inputs!$F${er}*Inputs!$F${hr})"
         pre = f"(Inputs!$G${er}*Inputs!$F${fr})"
         n = f"Investment in {e.name}"
         sc = f"(-{usd(SC, e.entity)})"
-        gw_hist = f"({eh}*{inv}-{own}*({sc}+{pre}))"
+        gw_hist = f"({eh}*{inv_hist}-{own}*({sc}+{pre}))"
         formulas += [(n, SC, f"={sc}"), (n, RE, f"={pre}"), (n, GW, f"={gw_hist}*Inputs!$D${fr}/Inputs!$F${fr}"),
                      (n, INV, f"=-{inv}"), (n, NCI, f"=-((1-{own})*({sc}+{pre})-(1-{eh})*{inv})")]
-        if e.currency != GROUP_CCY:
-            formulas += [(n, CTA, f"={gw_hist}*(1-Inputs!$D${fr}/Inputs!$F${fr})")]
+        if e.currency != GROUP_CCY or ent_by.currency[e.held_by] != GROUP_CCY:
+            formulas += [(n, CTA, f"={gw_hist}*(1-Inputs!$D${fr}/Inputs!$F${fr})+{eh}*({inv}-{inv_hist})")]
         if e.effective < 1:
             n = f"NCI share of {e.name} post-acquisition reserves"
             post = f"(-{usd(RE, e.entity)}-{pre})"; cta = usd(CTA, e.entity)
@@ -645,7 +650,8 @@ IFRS_STEPS = [
     ("Control (subsidiaries)",
      "An investor controls an investee when it has power over it, is exposed to variable returns from it and can use "
      "its power to affect those returns. Subsidiaries One and Two are controlled directly through a majority of "
-     "the voting rights, and Subsidiary Three through Subsidiary One. Each is consolidated from the date "
+     "the voting rights, Subsidiary Three through Subsidiary One and Subsidiary Four through Subsidiary Two. "
+     "Each is consolidated from the date "
      "control was obtained.", "IFRS 10.6-7, B35"),
     ("Significant influence (associates)",
      "Significant influence is the power to take part in financial and operating policy decisions without control. "
@@ -677,11 +683,16 @@ IFRS_STEPS = [
      "made here, so no goodwill is attributed to NCI). It is shown in equity, separately from the parent's "
      "equity, and receives its share of profit and of translation differences.", "IFRS 3.19; IFRS 10.22, B94"),
     ("Indirect holdings (sub-subsidiaries)",
-     "Subsidiary Three is 70% owned by Subsidiary One, which the parent owns in full. Control passes down the "
-     "chain, so Subsidiary Three is the parent's subsidiary and is consolidated in full. Goodwill and NCI use the "
-     "group's effective interest (100% x 70% = 70%). If the holder were not wholly owned, its NCI's share of the "
-     "cost of investment would be deducted from NCI, and NCI would also include the holder's NCI's indirect "
-     "share of the sub-subsidiary.", "IFRS 10.B86, Appendix A; IFRS 3.19, 3.32"),
+     "Control passes down the chain, so a subsidiary of a subsidiary is the parent's subsidiary and is "
+     "consolidated in full. Goodwill and NCI use the group's effective interest: Subsidiary Three 100% x 70% = 70%, "
+     "Subsidiary Four 80% x 75% = 60%. NCI in Subsidiary Four is 40%: the 25% direct minority plus the "
+     "Subsidiary Two minority's 20% x 75% indirect share, less that minority's 20% share of Subsidiary Two's cost "
+     "of investment.", "IFRS 10.B86, Appendix A; IFRS 3.19, 3.32"),
+    ("Foreign holding company",
+     "Subsidiary Two holds Subsidiary Four in euros. Its investment is in its translated trial balance at the "
+     "closing rate, so that amount is eliminated. Goodwill is measured with the cost at the historical rate, and "
+     "the translation difference on the investment is reversed: the group's share from the translation reserve "
+     "and the Subsidiary Two minority's share from NCI.", "IAS 21.39, 21.47; IFRS 10.B86(b)"),
     ("Intragroup transactions",
      "Intragroup balances, sales, purchases and unrealised profit in closing inventory are eliminated in full. "
      "The unrealised profit is charged to the selling entity; the seller is 100% owned, so NCI is not affected.",
@@ -752,6 +763,10 @@ def _ifrs_sheet(wb, entities, assoc, ent_row, acol, ar):
         if e.held_by != entities.entity.iloc[0]:
             how += (f" Group effective interest is {e.effective:.0%}; goodwill and NCI are measured on that "
                     f"interest.")
+            holder_ccy = entities.set_index("entity").currency[e.held_by]
+            if holder_ccy != GROUP_CCY:
+                how += (f" The {holder_ccy} holding company's investment is removed at the closing rate and its "
+                        f"translation difference reversed.")
         if e.currency != GROUP_CCY:
             how += f" Goodwill is held in {e.currency} and retranslated at the closing rate."
         if e.effective < 1:

@@ -3,3 +3,4 @@ PARENT,Parent Co. (UAE),USD,1,0,0,,
 SUB1,Subsidiary One (US),USD,1,2700,1200,,PARENT
 SUB2,Subsidiary Two (Germany),EUR,0.8,880,0,460,PARENT
 SUB3,Subsidiary Three (UK),GBP,0.7,600,100,377,SUB1
+SUB4,Subsidiary Four (France),EUR,0.75,450,100,241,SUB2

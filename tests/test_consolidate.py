@@ -25,10 +25,10 @@ class ConsolidateTest(unittest.TestCase):
 
     def test_sample_group_consolidates_and_balances(self):
         s, usd = self.run_on(DATA)
-        self.assertEqual(s["Revenue"], 24172)
-        self.assertAlmostEqual(s["Goodwill"], 576.2, places=2)
-        self.assertAlmostEqual(s["Profit for the year"], 3445.2, places=1)
-        self.assertAlmostEqual(s["Attributable to NCI"], 174.38, places=2)
+        self.assertEqual(s["Revenue"], 25480)
+        self.assertAlmostEqual(s["Goodwill"], 641.0, places=2)
+        self.assertAlmostEqual(s["Profit for the year"], 3608.7, places=1)
+        self.assertAlmostEqual(s["Attributable to NCI"], 239.78, places=2)
         self.assertAlmostEqual(s["Total assets"], s["Total equity and liabilities"], places=2)
 
     def test_translated_trial_balance_balances(self):
@@ -59,6 +59,16 @@ class ConsolidateTest(unittest.TestCase):
         gw = sum(a for n, acct, a in journal if acct == c.GW and "Three" in n)
         # GBP 60 of goodwill (600 cost - 70% x GBP 600 net assets x 1.25) retranslated at the 1.27 closing rate
         self.assertAlmostEqual(gw, 60 * 1.27, places=6)
+
+    def test_sub_subsidiary_held_by_foreign_partly_owned_subsidiary(self):
+        wide, coa, entities, fx, ic, assoc = c.load_inputs(DATA)
+        self.assertAlmostEqual(entities.set_index("entity").effective["SUB4"], 0.6)
+        _, journal, *_ = c.consolidate(wide, coa, entities, fx, ic, assoc)
+        sub4 = [(acct, a) for n, acct, a in journal if n == "Investment in Subsidiary Four (France)"]
+        # EUR 450 investment held by Sub Two, removed at the 1.08 closing rate
+        self.assertAlmostEqual(sum(a for acct, a in sub4 if acct == c.INV), -450 * 1.08, places=6)
+        # Group share of goodwill: 80% x (EUR 450 - 75% x EUR 500) = EUR 60, at the 1.08 closing rate
+        self.assertAlmostEqual(sum(a for acct, a in sub4 if acct == c.GW), 60 * 1.08, places=6)
 
     def test_indirect_holding_through_partly_owned_subsidiary(self):
         d = self.copy_data()
