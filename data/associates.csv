@@ -1,0 +1,3 @@
+entity,name,currency,ownership,investment_cost,net_assets_at_acquisition,re_at_acquisition,re_opening,profit_for_year,dividends_paid,impairment
+ASSOC1,Associate One (UAE),AED,0.3,900,9000,3000,4500,2200,1000,0
+ASSOC2,Associate Two (US),USD,0.25,600,2000,800,1200,480,200,40

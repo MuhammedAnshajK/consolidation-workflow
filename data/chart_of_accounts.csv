@@ -5,6 +5,7 @@ account_code,account_name,type
 1200,Inventory,A
 1500,"Property, plant and equipment",A
 1600,Investment in subsidiaries,A
+1650,Investment in associates,A
 2000,Trade payables,L
 2150,Intercompany payable,L
 2500,Borrowings,L
@@ -12,6 +13,7 @@ account_code,account_name,type
 3100,Retained earnings (opening),E
 4000,Revenue,I
 4050,Intercompany revenue,I
+4100,Dividend income from associates,I
 5000,Cost of sales,X
 5050,Intercompany purchases,X
 6000,Operating expenses,X
