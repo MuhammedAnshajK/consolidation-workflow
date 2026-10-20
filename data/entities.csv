@@ -1,4 +1,5 @@
-entity,name,currency,ownership,investment_cost,pre_acquisition_re,opening_re_group_currency
-PARENT,Parent Co.,USD,1,0,0,
-SUB1,Subsidiary One (US),USD,1,2700,1200,
-SUB2,Subsidiary Two (Germany),EUR,0.8,880,0,460
+entity,name,currency,ownership,investment_cost,pre_acquisition_re,opening_re_group_currency,held_by
+PARENT,Parent Co. (UAE),USD,1,0,0,,
+SUB1,Subsidiary One (US),USD,1,2700,1200,,PARENT
+SUB2,Subsidiary Two (Germany),EUR,0.8,880,0,460,PARENT
+SUB3,Subsidiary Three (UK),GBP,0.7,600,100,377,SUB1

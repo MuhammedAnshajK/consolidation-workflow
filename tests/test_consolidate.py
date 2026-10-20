@@ -25,10 +25,10 @@ class ConsolidateTest(unittest.TestCase):
 
     def test_sample_group_consolidates_and_balances(self):
         s, usd = self.run_on(DATA)
-        self.assertEqual(s["Revenue"], 22124)
-        self.assertEqual(s["Goodwill"], 500)
-        self.assertAlmostEqual(s["Profit for the year"], 3176.4, places=1)
-        self.assertAlmostEqual(s["Attributable to NCI"], 93.74, places=2)
+        self.assertEqual(s["Revenue"], 24172)
+        self.assertAlmostEqual(s["Goodwill"], 576.2, places=2)
+        self.assertAlmostEqual(s["Profit for the year"], 3445.2, places=1)
+        self.assertAlmostEqual(s["Attributable to NCI"], 174.38, places=2)
         self.assertAlmostEqual(s["Total assets"], s["Total equity and liabilities"], places=2)
 
     def test_translated_trial_balance_balances(self):
@@ -50,6 +50,32 @@ class ConsolidateTest(unittest.TestCase):
         tb.loc[0, "debit"] += 10
         tb.to_csv(d / "trial_balances.csv", index=False)
         with self.assertRaisesRegex(c.ValidationError, "PARENT does not balance"):
+            self.run_on(d)
+
+    def test_sub_subsidiary_uses_effective_interest(self):
+        wide, coa, entities, fx, ic, assoc = c.load_inputs(DATA)
+        self.assertAlmostEqual(entities.set_index("entity").effective["SUB3"], 0.7)
+        _, journal, *_ = c.consolidate(wide, coa, entities, fx, ic, assoc)
+        gw = sum(a for n, acct, a in journal if acct == c.GW and "Three" in n)
+        # GBP 60 of goodwill (600 cost - 70% x GBP 600 net assets x 1.25) retranslated at the 1.27 closing rate
+        self.assertAlmostEqual(gw, 60 * 1.27, places=6)
+
+    def test_indirect_holding_through_partly_owned_subsidiary(self):
+        d = self.copy_data()
+        e = pd.read_csv(d / "entities.csv")
+        e.loc[e.entity == "SUB1", "ownership"] = 0.9
+        e.to_csv(d / "entities.csv", index=False)
+        wide, coa, entities, fx, ic, assoc = c.load_inputs(d)
+        self.assertAlmostEqual(entities.set_index("entity").effective["SUB3"], 0.63)
+        s, _ = self.run_on(d)
+        self.assertAlmostEqual(s["Total assets"], s["Total equity and liabilities"], places=2)
+
+    def test_unknown_holding_company_is_rejected(self):
+        d = self.copy_data()
+        e = pd.read_csv(d / "entities.csv")
+        e.loc[e.entity == "SUB3", "held_by"] = "SUB9"
+        e.to_csv(d / "entities.csv", index=False)
+        with self.assertRaisesRegex(c.ValidationError, "held by SUB9"):
             self.run_on(d)
 
     def test_associates_use_equity_method(self):

@@ -24,11 +24,11 @@ SUB1,1100,Trade receivables,900,0
 SUB1,1150,Intercompany receivable,150,0
 SUB1,1200,Inventory,700,0
 SUB1,1500,"Property, plant and equipment",2500,0
-SUB1,1600,Investment in subsidiaries,0,0
+SUB1,1600,Investment in subsidiaries,600,0
 SUB1,1650,Investment in associates,0,0
 SUB1,2000,Trade payables,0,650
 SUB1,2150,Intercompany payable,0,0
-SUB1,2500,Borrowings,0,1000
+SUB1,2500,Borrowings,0,1600
 SUB1,3000,Share capital,0,1000
 SUB1,3100,Retained earnings (opening),0,1460
 SUB1,4000,Revenue,0,4200
@@ -59,3 +59,23 @@ SUB2,5050,Intercompany purchases,0,0
 SUB2,6000,Operating expenses,800,0
 SUB2,7000,Interest expense,30,0
 SUB2,8000,Income tax expense,140,0
+SUB3,1000,Cash,160,0
+SUB3,1100,Trade receivables,250,0
+SUB3,1150,Intercompany receivable,0,0
+SUB3,1200,Inventory,180,0
+SUB3,1500,"Property, plant and equipment",900,0
+SUB3,1600,Investment in subsidiaries,0,0
+SUB3,1650,Investment in associates,0,0
+SUB3,2000,Trade payables,0,180
+SUB3,2150,Intercompany payable,0,0
+SUB3,2500,Borrowings,0,300
+SUB3,3000,Share capital,0,500
+SUB3,3100,Retained earnings (opening),0,300
+SUB3,4000,Revenue,0,1600
+SUB3,4050,Intercompany revenue,0,0
+SUB3,4100,Dividend income from associates,0,0
+SUB3,5000,Cost of sales,1000,0
+SUB3,5050,Intercompany purchases,0,0
+SUB3,6000,Operating expenses,300,0
+SUB3,7000,Interest expense,20,0
+SUB3,8000,Income tax expense,70,0

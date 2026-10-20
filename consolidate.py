@@ -1,4 +1,5 @@
-"""Consolidates a parent, its subsidiaries and its associates into group financial statements under IFRS.
+"""Consolidates a UAE parent, its subsidiaries (including a sub-subsidiary) and its associates into group
+financial statements under IFRS.
 
 Steps: load each entity's trial balance, translate foreign subsidiaries into the
 group currency, eliminate intercompany balances, sales, unrealised profit and the
@@ -60,6 +61,20 @@ def load_inputs(data_dir):
         raise ValidationError(f"No exchange rates for: {no_rate}")
     if entities.iloc[0].ownership != 1:
         raise ValidationError("The first entity in entities.csv must be the parent (ownership 1)")
+    if "held_by" not in entities:
+        entities["held_by"] = [None] + [entities.entity.iloc[0]] * (len(entities) - 1)
+    entities["held_by"] = entities.held_by.where(entities.held_by.notna(), None)
+    entities.loc[0, "held_by"] = None
+    ccy_of = entities.set_index("entity").currency
+    effective = {entities.entity.iloc[0]: 1.0}
+    for e in entities.iloc[1:].itertuples(index=False):
+        if e.held_by not in effective:
+            raise ValidationError(f"{e.entity} is held by {e.held_by}, which must be listed above it in entities.csv")
+        if ccy_of[e.held_by] != GROUP_CCY:
+            raise ValidationError(f"{e.entity} is held by {e.held_by}, a {ccy_of[e.held_by]} entity; holding "
+                                  f"companies must report in {GROUP_CCY} in this version")
+        effective[e.entity] = effective[e.held_by] * e.ownership
+    entities["effective"] = entities.entity.map(effective)
     over = list(assoc.loc[assoc.ownership > 0.5, "entity"])
     if over:
         raise ValidationError(f"Associates owned over 50% are normally controlled (IFRS 10), so list them in "
@@ -119,15 +134,26 @@ def equity_method(assoc, fx, ic):
     return em
 
 
-def eliminations(usd, entities, ic, em=None):
-    """Returns a list of (entry, description, account, amount) with debits positive."""
+def eliminations(usd, entities, ic, em=None, fx=None):
+    """Returns a list of (entry, description, account, amount) with debits positive.
+
+    Goodwill and NCI use the group's effective interest, so a subsidiary held through another subsidiary gets
+    the holder's NCI share of the cost of investment deducted (indirect holding). Goodwill of a foreign
+    subsidiary is held in its own currency and retranslated at the closing rate (IAS 21.47)."""
     j = []
+    eff = entities.set_index("entity").effective
     for _, e in entities.iloc[1:].iterrows():
-        own, inv, pre = e.ownership, e.investment_cost, e.pre_acquisition_re
+        r = fx.loc[e.currency] if fx is not None else None
+        hist, clo = (r.historical, r.closing) if r is not None else (1, 1)
+        own, eh, inv, pre = e.effective, eff[e.held_by], e.investment_cost, e.pre_acquisition_re * hist
         sc = -usd.at[SC, e.entity]
-        goodwill = inv - own * (sc + pre)
+        gw_hist = eh * inv - own * (sc + pre)
+        gw = gw_hist * clo / hist
         n = f"Investment in {e['name']}"
-        j += [(n, SC, sc), (n, RE, pre), (n, GW, goodwill), (n, INV, -inv), (n, NCI, -(1 - own) * (sc + pre))]
+        j += [(n, SC, sc), (n, RE, pre), (n, GW, gw), (n, INV, -inv),
+              (n, NCI, -((1 - own) * (sc + pre) - (1 - eh) * inv))]
+        if e.currency != GROUP_CCY:
+            j += [(n, CTA, gw_hist - gw)]
         if own < 1:
             n = f"NCI share of {e['name']} post-acquisition reserves"
             post_re = -usd.at[RE, e.entity] - pre
@@ -167,7 +193,7 @@ def consolidate(wide, coa, entities, fx, ic, assoc=None):
     usd = translate(wide, coa, entities, fx)
     usd = usd.reindex(list(usd.index) + [a[0] for a in GROUP_ACCOUNTS if a[0] not in usd.index]).fillna(0)
     em = equity_method(assoc, fx, ic) if assoc is not None and len(assoc) else None
-    journal = eliminations(usd, entities, ic, em)
+    journal = eliminations(usd, entities, ic, em, fx)
     elim = pd.Series(0.0, index=usd.index)
     for _, acct, amt in journal:
         elim[acct] += amt
@@ -188,7 +214,7 @@ def consolidate(wide, coa, entities, fx, ic, assoc=None):
 def summarise(usd, entities, consolidated):
     c = -consolidated
     profit = c[[a for a in c.index if 4000 <= a < 9000]].sum()
-    nci_profit = sum((1 - e.ownership) * -usd[e.entity][[a for a in usd.index if 4000 <= a < 9000]].sum()
+    nci_profit = sum((1 - e.effective) * -usd[e.entity][[a for a in usd.index if 4000 <= a < 9000]].sum()
                      for _, e in entities.iloc[1:].iterrows())
     s = {"Revenue": c[4000] + c[4050], "Profit for the year": profit, "Attributable to owners": profit - nci_profit,
          "Attributable to NCI": nci_profit, "Share of profit of associates": c.get(SHARE_ASSOC, 0),
@@ -240,15 +266,20 @@ def write_workbook(wide, coa, entities, fx, ic, journal, out_path, assoc=None):
 
     # Inputs: entities, FX, intercompany
     inp = _sheet(wb, "Inputs", "Group structure, exchange rates and intercompany data")
-    _header(inp, 5, ["Entity", "Name", "Currency", "Ownership", "Investment cost", "Pre-acq. retained earnings",
-                     "Opening RE (USD)"], widths=[10, 28, 10, 11, 12, 14, 12])
+    _header(inp, 5, ["Entity", "Name", "Currency", "Ownership", "Investment cost (USD)",
+                     "Pre-acq. retained earnings (local)", "Opening RE (USD)", "Held by", "Group effective interest"],
+            widths=[10, 28, 10, 11, 12, 14, 12, 10, 12])
     ent_row = {}
     for i, e in enumerate(entities.itertuples(index=False)):
         r = 6 + i; ent_row[e.entity] = r
         for j, v in enumerate([e.entity, e.name, e.currency, e.ownership, e.investment_cost, e.pre_acquisition_re,
-                               None if pd.isna(e.opening_re_group_currency) else e.opening_re_group_currency]):
-            c = inp.cell(row=r, column=2 + j, value=v); c.font = _f(color="0000FF" if j >= 3 else "000000")
+                               None if pd.isna(e.opening_re_group_currency) else e.opening_re_group_currency,
+                               e.held_by]):
+            c = inp.cell(row=r, column=2 + j, value=v); c.font = _f(color="0000FF" if 3 <= j < 7 else "000000")
             c.number_format = "0%" if j == 3 else NUM
+            if j == 7: c.alignment = Alignment(horizontal="right")
+        c = inp.cell(row=r, column=10, value=1 if i == 0 else f"=E{r}*J{ent_row[e.held_by]}")
+        c.number_format = "0%"; c.font = _f()
     fx_top = 6 + len(ents) + 2
     _header(inp, fx_top, ["Currency", "", "Closing", "Average", "Historical"])
     fx_row = {}
@@ -430,12 +461,17 @@ def write_workbook(wide, coa, entities, fx, ic, journal, out_path, assoc=None):
         return f"Translation!{tr_cols[ent]}{tr_row[code]}"
     formulas = []
     for e in sub_iter:
-        er = ent_row[e.entity]; own, inv, pre = f"Inputs!$E${er}", f"Inputs!$F${er}", f"Inputs!$G${er}"
+        er = ent_row[e.entity]; fr = fx_row[e.currency]
+        own, eh, inv = f"Inputs!$J${er}", f"Inputs!$J${ent_row[e.held_by]}", f"Inputs!$F${er}"
+        pre = f"(Inputs!$G${er}*Inputs!$F${fr})"
         n = f"Investment in {e.name}"
         sc = f"(-{usd(SC, e.entity)})"
-        formulas += [(n, SC, f"={sc}"), (n, RE, f"={pre}"), (n, GW, f"={inv}-{own}*({sc}+{pre})"),
-                     (n, INV, f"=-{inv}"), (n, NCI, f"=-(1-{own})*({sc}+{pre})")]
-        if e.ownership < 1:
+        gw_hist = f"({eh}*{inv}-{own}*({sc}+{pre}))"
+        formulas += [(n, SC, f"={sc}"), (n, RE, f"={pre}"), (n, GW, f"={gw_hist}*Inputs!$D${fr}/Inputs!$F${fr}"),
+                     (n, INV, f"=-{inv}"), (n, NCI, f"=-((1-{own})*({sc}+{pre})-(1-{eh})*{inv})")]
+        if e.currency != GROUP_CCY:
+            formulas += [(n, CTA, f"={gw_hist}*(1-Inputs!$D${fr}/Inputs!$F${fr})")]
+        if e.effective < 1:
             n = f"NCI share of {e.name} post-acquisition reserves"
             post = f"(-{usd(RE, e.entity)}-{pre})"; cta = usd(CTA, e.entity)
             formulas += [(n, RE, f"=(1-{own})*{post}"), (n, NCI, f"=-(1-{own})*{post}"),
@@ -506,7 +542,7 @@ def write_workbook(wide, coa, entities, fx, ic, journal, out_path, assoc=None):
     def T(code, ent): return f"Translation!{tr_cols[ent]}{tr_row[code]}"
     is_ = _sheet(wb, "Consolidated IS", "Consolidated income statement for the year ended 31 December 2025")
     is_.column_dimensions["B"].width = 44; is_.column_dimensions["C"].width = 14
-    nci_terms = "+".join(f"(1-Inputs!$E${ent_row[e.entity]})*-SUM(Translation!{tr_cols[e.entity]}{tr_row[4000]}:"
+    nci_terms = "+".join(f"(1-Inputs!$J${ent_row[e.entity]})*-SUM(Translation!{tr_cols[e.entity]}{tr_row[4000]}:"
                          f"{tr_cols[e.entity]}{tr_row[8000]})" for e in sub_iter)
     is_lines = [
         ("Revenue", f"=-({C(4000)}+{C(4050)})", None),
@@ -608,23 +644,27 @@ def write_workbook(wide, coa, entities, fx, ic, journal, out_path, assoc=None):
 IFRS_STEPS = [
     ("Control (subsidiaries)",
      "An investor controls an investee when it has power over it, is exposed to variable returns from it and can use "
-     "its power to affect those returns. Both subsidiaries are controlled through a majority of the voting rights, "
-     "so they are consolidated from the date control was obtained.", "IFRS 10.6-7, B35"),
+     "its power to affect those returns. Subsidiaries One and Two are controlled directly through a majority of "
+     "the voting rights, and Subsidiary Three through Subsidiary One. Each is consolidated from the date "
+     "control was obtained.", "IFRS 10.6-7, B35"),
     ("Significant influence (associates)",
      "Significant influence is the power to take part in financial and operating policy decisions without control. "
      "A holding of 20% or more of the voting power is presumed to give it, and board representation is typical "
      "evidence. Both associates are held at 25% to 30%.", "IAS 28.3, 28.5-6"),
     ("Uniform policies and reporting date",
      "All entities use the group's IFRS accounting policies and a 31 December year end, so no alignment "
-     "adjustments are needed. A different year end would need adjusting for significant transactions and may "
+     "adjustments are needed. Entities in countries that do not use IFRS locally (such as the US) report to the "
+     "group on IFRS policies. A different year end would need adjusting for significant transactions and may "
      "differ by no more than three months.", "IFRS 10.B87, B92-B93; IAS 28.33-36"),
     ("Foreign currency translation",
      "Subsidiary Two (EUR) is translated into USD: assets and liabilities at the closing rate, income and "
      "expenses at the average rate (an approximation of transaction-date rates) and share capital at the "
      "historical rate. The difference goes to the translation reserve in other comprehensive income, and the "
-     "NCI's share is allocated to NCI. Associate One reports in AED, which is pegged to the USD, so no exchange "
+     "NCI's share is allocated to NCI. Subsidiary Three (GBP) is translated the same way, and its goodwill is "
+     "treated as its own asset: held in GBP and retranslated at the closing rate, with the difference in the "
+     "translation reserve. Associate One reports in AED, which is pegged to the USD, so no exchange "
      "difference arises; for a floating currency it would also go to the translation reserve.",
-     "IAS 21.39-41, 21.44; IAS 28.10"),
+     "IAS 21.39-41, 21.44, 21.47; IAS 28.10"),
     ("Combine line by line (subsidiaries only)",
      "The assets, liabilities, income and expenses of the parent and its subsidiaries are added together in full, "
      "even where the group owns less than 100%.", "IFRS 10.B86(a)"),
@@ -636,6 +676,12 @@ IFRS_STEPS = [
      "NCI is measured at its proportionate share of the subsidiary's identifiable net assets (the IFRS 3 choice "
      "made here, so no goodwill is attributed to NCI). It is shown in equity, separately from the parent's "
      "equity, and receives its share of profit and of translation differences.", "IFRS 3.19; IFRS 10.22, B94"),
+    ("Indirect holdings (sub-subsidiaries)",
+     "Subsidiary Three is 70% owned by Subsidiary One, which the parent owns in full. Control passes down the "
+     "chain, so Subsidiary Three is the parent's subsidiary and is consolidated in full. Goodwill and NCI use the "
+     "group's effective interest (100% x 70% = 70%). If the holder were not wholly owned, its NCI's share of the "
+     "cost of investment would be deducted from NCI, and NCI would also include the holder's NCI's indirect "
+     "share of the sub-subsidiary.", "IFRS 10.B86, Appendix A; IFRS 3.19, 3.32"),
     ("Intragroup transactions",
      "Intragroup balances, sales, purchases and unrealised profit in closing inventory are eliminated in full. "
      "The unrealised profit is charged to the selling entity; the seller is 100% owned, so NCI is not affected.",
@@ -675,7 +721,9 @@ IFRS_STEPS = [
 
 
 def _ifrs_sheet(wb, entities, assoc, ent_row, acol, ar):
-    ws = _sheet(wb, "IFRS Treatment", "How each entity is treated under IFRS", "Group structure and accounting basis")
+    ws = _sheet(wb, "IFRS Treatment", "How each entity is treated under IFRS",
+                "Parent incorporated in the UAE; consolidated financial statements prepared under IFRS Accounting Standards")
+    names = entities.set_index("entity")["name"]
     wrap = Alignment(wrap_text=True, vertical="top")
     _header(ws, 5, ["Entity", "Relationship", "Ownership", "Standards", "Method", "How it is treated in this workbook"],
             widths=[26, 34, 11, 22, 24, 80])
@@ -684,20 +732,32 @@ def _ifrs_sheet(wb, entities, assoc, ent_row, acol, ar):
     rows = []
     for i, e in enumerate(entities.itertuples(index=False)):
         if i == 0:
-            rows.append((e.name, "Parent and reporting entity", None, "IFRS 10, IAS 1", "Prepares the consolidated "
-                         "statements", f"Combined in full. Functional and presentation currency {GROUP_CCY}."))
+            rows.append((e.name, "Parent and reporting entity, incorporated in the UAE", None, "IFRS 10, IAS 1, IAS 21",
+                         "Prepares the consolidated statements",
+                         "The UAE requires companies to prepare their financial statements under IFRS, so the group "
+                         "reports under IFRS. Combined in full. Functional and presentation currency "
+                         f"{GROUP_CCY}: most sales, pricing and financing are in {GROUP_CCY} (IAS 21.9), and the "
+                         "UAE dirham is pegged to it."))
             continue
         why = "100% of the voting rights gives control" if e.ownership == 1 else \
             f"{e.ownership:.0%} of the voting rights (a majority) gives control"
+        if e.held_by != entities.entity.iloc[0]:
+            why = (f"{e.ownership:.0%} held by {names[e.held_by]}, so the parent controls it indirectly "
+                   f"(sub-subsidiary)")
         how = ("Combined line by line. The investment is eliminated against share capital and pre-acquisition "
                "reserves; any excess of cost is goodwill.")
         std = "IFRS 10, IFRS 3"
         if e.currency != GROUP_CCY:
             std += ", IAS 21"; how = f"Translated from {e.currency} to {GROUP_CCY} first. " + how
-        if e.ownership < 1:
-            how += f" The other {1 - e.ownership:.0%} is a non-controlling interest, shown in equity, with its share of profit and translation differences."
+        if e.held_by != entities.entity.iloc[0]:
+            how += (f" Group effective interest is {e.effective:.0%}; goodwill and NCI are measured on that "
+                    f"interest.")
+        if e.currency != GROUP_CCY:
+            how += f" Goodwill is held in {e.currency} and retranslated at the closing rate."
+        if e.effective < 1:
+            how += f" The other {1 - e.effective:.0%} is a non-controlling interest, shown in equity, with its share of profit and translation differences."
         rows.append((e.name, f"Subsidiary: {why}", f"=Inputs!$E${ent_row[e.entity]}", std,
-                     "Full consolidation (acquisition method)" + (" with NCI" if e.ownership < 1 else ""), how))
+                     "Full consolidation (acquisition method)" + (" with NCI" if e.effective < 1 else ""), how))
     for a in assoc.itertuples(index=False) if len(assoc) else []:
         why = (f"{a.ownership:.0%} of the voting rights: presumed significant influence, not control"
                if a.ownership >= 0.2 else f"{a.ownership:.0%}: significant influence shown by board representation")
